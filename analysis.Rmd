@@ -1,0 +1,190 @@
+---
+title: "Maternal Health Risk Analysis"
+output: html_document
+author: "Ananya Raman"
+date: "2025-12-01"
+---
+
+## Introduction
+
+Maternal health outcomes remain a global public health challenge, particularly in low-resource settings where monitoring risk factors is difficult. The maternal health risk dataset chosen for this report provides the following measurements collected from different hospitals, community clinics, and maternal health care programs through the IoT based risk monitoring system:
+
+-   Age: Age in years when a woman is pregnant.
+
+-   SystolicBP: Upper value of Blood Pressure in mmHg, another significant attribute during pregnancy.
+
+-   DiastolicBP: Lower value of Blood Pressure in mmHg, another significant attribute during pregnancy.
+
+-   BS: Blood glucose levels is in terms of a molar concentration, mmol/L.
+
+-   HeartRate: A normal resting heart rate in beats per minute.
+
+-   Risk Level: Predicted Risk Intensity Level (low, mid, high) during pregnancy considering the previous attribute.
+
+As a general term, "maternal health risk" refers to health risks that could occur during pregnancy, such as preeclampsia or ectopic pregnancy, which result from high blood pressure, or gestational diabetes, which causes high blood sugar. Based on this, we can infer that blood pressure and blood sugar are key indicators of maternal health risk. This idea will be explored in the following steps.
+
+In this analysis, we will:
+1.  Explore physiological differences between risk levels,
+2.  Identify which features are predictive of elevated maternal risk,
+3.  Uncover clusters within the physiological measurements using unsupervised methods.
+
+To do this, we will use two approaches.
+1.  Supervised classification to model maternal risk and assess feature importance through random forest.
+2.  Unsupervised learning to visualize structure and subgroups in the data through PCA and K-means.
+
+```{r, warning=FALSE, message=FALSE}
+#| label: setup
+
+library(tidyverse)
+library(caret)
+library(randomForest)
+library(ggrepel)
+library(cluster)
+library(factoextra)
+library(corrplot)
+library(viridis)
+
+# read in data
+dat <- read.csv("/home/rstudio/project/maternal_health.csv")
+
+# view data
+glimpse(dat)
+table(dat$RiskLevel)
+
+# clean risklevel
+dat <- dat %>%
+  mutate(RiskLevel = str_remove(RiskLevel, " risk"))
+dat$RiskLevel <- factor(dat$RiskLevel)
+```
+
+## Exploratory Data Analysis
+
+We will first examine how physiological measures differ across the three RiskLevel categories.
+
+```{r}
+#| label: boxplots-by-risklevel
+
+dat_long <- dat %>%
+  pivot_longer(cols = -RiskLevel)
+
+ggplot(dat_long, aes(x = RiskLevel, y = value, fill = RiskLevel)) +
+  geom_boxplot() +
+  facet_wrap(~name, scales = "free_y") +
+  theme_minimal(base_size = 14) +
+  labs(title = "Distributions of Physiological Features by Maternal Risk Level")
+```
+
+The boxplots show consistent patterns across the three risk levels. Women in the high risk category are higher in age, blood sugar, diastolic and systolic blood pressure, and heart rate. This pattern suggests that physiological features are meaningfully related to maternal risk level.
+
+```{r}
+#| label: correlation-heatmap
+
+# remove risklevel
+num_dat <- dat %>% select(-RiskLevel)
+corr <- cor(num_dat)
+
+# correlation heatmap
+corrplot(corr, method = "color", type = "upper",
+         tl.col = "black", tl.srt = 45,
+         title = "Correlation Heatmap of Maternal Health Variables")
+```
+
+Looking at the correlation heatmap, we can see that systolic and diastolic blood pressure show moderately strong correlation. Blood sugar has a weaker but meaningful association with blood pressure indicators. Heart rate and body temperature appear uncorrelated with any other physiological indicators.
+
+Now that we've explored the data, we can proceed with dimensionality reduction and classification modeling to dig deeper into these patterns.
+
+## Unsupervised Learning
+
+We will use principal component analysis (PCA) on physiological features as a method of dimensionality reduction to visualize patterns.
+
+```{r, warning=FALSE}
+#| label: pca-scree
+
+# run PCA
+pca <- prcomp(num_dat, scale. = TRUE)
+summary(pca)
+
+# scree plot
+fviz_eig(pca, addlabels = TRUE, ylim = c(0, 60)) +
+  ggtitle("PCA Scree Plot: Variance Explained")
+```
+
+The scree plot shows that the first component explains a substantial portion of the variance, and the first two components together explain over half of the variance. This raises the question of what visualizing PC1 and PC2 could look like.
+
+```{r}
+#| label: pca-scatter
+
+# add risklevel categories to PCA result
+pca_dat <- as.data.frame(pca$x) %>%
+  mutate(RiskLevel = dat$RiskLevel)
+
+# PCA scatterplot by risklevel
+ggplot(pca_dat, aes(PC1, PC2, color = RiskLevel)) +
+  geom_point(alpha = 0.8, size = 3) +
+  scale_color_viridis(discrete = TRUE) +
+  theme_minimal(base_size = 14) +
+  labs(title = "PCA Scatter Plot Colored by Maternal Risk Level")
+```
+
+The scatterplot shows that low, mid, and high risk individuals partially cluster apart, but for the most part, there is quite a bit of overlap. We could investigate further seeing as how there is some separation, possibly due to physiological characteristics.
+
+Now we will apply K-means clustering with k=3 to the standardized data.
+
+```{r}
+#| label: kmeans-pca
+
+# run kmeans
+set.seed(72000)
+km <- kmeans(scale(num_dat), centers = 3, nstart = 20)
+
+pca_dat$Cluster <- factor(km$cluster)
+
+# clusters projected onto PCA components
+ggplot(pca_dat, aes(PC1, PC2, color = Cluster)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_viridis(discrete = TRUE, option = "H") +
+  theme_minimal(base_size = 14) +
+  labs(title = "K-Means Clusters Projected on PCA Axes")
+```
+
+When projected onto PCA components, the clusters clearly form distinct groupings (aside from the single outlier in cluster 3). However, they do not necessarily align with the risk level categories. This difference suggests that unsupervised physiological clusters may capture different patterns than the risk level categories in the dataset. The clustering structure may reflect variations in metabolic indicators, which would imply the presence of distinct risk phenotypes!
+
+## Supervised Learning
+
+To understand predictive drivers of maternal risk, we will train a random forest classifier using the physiological measurements.
+
+```{r}
+#| label: random-forest
+
+# run random forest
+set.seed(72000)
+rf <- randomForest(RiskLevel ~ ., data = dat, importance = TRUE)
+rf
+
+# display feature importance
+imp <- importance(rf)
+imp_df <- data.frame(Feature = rownames(imp),
+                     MeanDecreaseGini = imp[, "MeanDecreaseGini"])
+
+ggplot(imp_df, aes(x = reorder(Feature, MeanDecreaseGini),
+                   y = MeanDecreaseGini)) +
+  geom_col(fill = "darkblue") +
+  coord_flip() +
+  theme_minimal(base_size = 14) +
+  labs(title = "Random Forest Feature Importance",
+       x = "Feature", y = "Importance (Gini)")
+```
+
+The random forest model has an estimated accuracy of 85.4%, so it performs well. The feature importance plot highlights blood sugar as the strongest contributor to predicting maternal risk followed by systolic blood pressure and age. These results are consistent with established studies of maternal health disorders as mentioned previously. The supervised model reinforces the fact that blood pressure and blood sugar are the key indicators to watch out for when it comes to maternal health!
+
+## Conclusion
+
+Through this analysis, we have shown that maternal risk levels can be meaningfully characterized using physiological measurements. Both supervised and unsupervised methods revealed that 
+- there are distinct physiological profiles across risk categories, 
+- blood pressure and blood sugar are the most influential indicators of maternal risk, 
+- potential subtypes of risk emerge from clustering, suggesting that women with high risk, for instance, may differ in underlying physiological characteristics within that category.
+
+Some future directions that can be done to dive deeper into this analysis could be:
+1.  Predictive modelling to explore additional classification models through gradient boosting, for example, to identify robust predictors across algorithms.
+2.  Nonlinear dimensionality reduction such as UMAP or t-SNE, then density-based clustering techniques could identify more nuanced physiological subtypes.
+3.  Incorporating demographic or medical history variables to the existing dataset would improve model interpretability in a clinical setting.
