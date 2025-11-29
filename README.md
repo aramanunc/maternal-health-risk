@@ -35,6 +35,10 @@ Start by cloning this Github repository.
 Linux/macOS: `docker run -d -p 8787:8787 -e PASSWORD=yourpassword -v$(pwd):/home/rstudio/project maternal-health`
 
 Windows: `docker run -d -p 8787:8787 -e PASSWORD=yourpassword -v ${PWD}:/home/rstudio/project maternal-health`
+
+If on an M1/M2 Mac, you must use the ARM-compatible Rstudio image `amoselb/rstudio-m1` `with docker build -t maternal-health --platform linux/arm64 .`
+
+
 ### 3. Log into Rstudio
 Open http://localhost:8787 in a browser and enter username: rstudio and password: yourpassword
 
