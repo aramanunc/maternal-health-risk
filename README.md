@@ -23,7 +23,7 @@ analysis.html: rendered HTML report
 ## Reproduce the Project
 Start by cloning this Github repository.
 
-`git clone https://github.com/aramanunc/maternal-health-project.git`
+`git clone https://github.com/aramanunc/maternal-health-risk.git`
 
 `cd maternal-health-project`
 
